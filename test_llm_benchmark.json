@@ -1,0 +1,173 @@
+{
+  "summary": {
+    "total_prompts_inserted": 5,
+    "total_queries": 11,
+    "cache_hits": 6,
+    "cache_misses": 5,
+    "hit_rate": 54.54545454545454,
+    "avg_insert_time_ms": 14025.587749481201,
+    "avg_query_time_ms": 423.38531667535955,
+    "avg_hit_query_time_ms": 39.59735234578451,
+    "avg_miss_query_time_ms": 883.9308738708496,
+    "min_query_time_ms": 38.40374946594238,
+    "max_query_time_ms": 1411.2677574157715,
+    "p50_query_time_ms": 43.23935508728027,
+    "p95_query_time_ms": 1409.602165222168,
+    "p99_query_time_ms": 1410.9346389770508,
+    "avg_similarity_score": 0.9999999599999999,
+    "min_similarity_score": 0.99999994,
+    "max_similarity_score": 1.0,
+    "total_llm_calls": 5,
+    "avg_response_length": 4974,
+    "total_duration_seconds": 74.78517723083496
+  },
+  "insert_results": [
+    {
+      "operation": "insert",
+      "duration_ms": 20140.670776367188,
+      "cache_hit": false,
+      "similarity_score": 0.0,
+      "prompt_length": 49,
+      "response_length": 8951,
+      "timestamp": "2025-10-09T16:00:14.938725"
+    },
+    {
+      "operation": "insert",
+      "duration_ms": 11413.896083831787,
+      "cache_hit": false,
+      "similarity_score": 0.0,
+      "prompt_length": 47,
+      "response_length": 5190,
+      "timestamp": "2025-10-09T16:00:26.352653"
+    },
+    {
+      "operation": "insert",
+      "duration_ms": 5518.880128860474,
+      "cache_hit": false,
+      "similarity_score": 0.0,
+      "prompt_length": 38,
+      "response_length": 3212,
+      "timestamp": "2025-10-09T16:00:31.871566"
+    },
+    {
+      "operation": "insert",
+      "duration_ms": 17825.741052627563,
+      "cache_hit": false,
+      "similarity_score": 0.0,
+      "prompt_length": 53,
+      "response_length": 8499,
+      "timestamp": "2025-10-09T16:00:49.697328"
+    },
+    {
+      "operation": "insert",
+      "duration_ms": 15228.750705718994,
+      "cache_hit": false,
+      "similarity_score": 0.0,
+      "prompt_length": 42,
+      "response_length": 8901,
+      "timestamp": "2025-10-09T16:01:04.926100"
+    }
+  ],
+  "query_results": [
+    {
+      "operation": "query_similar",
+      "duration_ms": 39.79134559631348,
+      "cache_hit": true,
+      "similarity_score": 0.99999994,
+      "prompt_length": 49,
+      "response_length": 8951,
+      "timestamp": "2025-10-09T16:01:04.966164"
+    },
+    {
+      "operation": "query_new",
+      "duration_ms": 1407.9365730285645,
+      "cache_hit": false,
+      "similarity_score": 0.0,
+      "prompt_length": 31,
+      "response_length": 410,
+      "timestamp": "2025-10-09T16:01:06.374127"
+    },
+    {
+      "operation": "query_original",
+      "duration_ms": 43.23935508728027,
+      "cache_hit": true,
+      "similarity_score": 1.0,
+      "prompt_length": 53,
+      "response_length": 8499,
+      "timestamp": "2025-10-09T16:01:06.417399"
+    },
+    {
+      "operation": "query_original",
+      "duration_ms": 38.5432243347168,
+      "cache_hit": true,
+      "similarity_score": 0.99999994,
+      "prompt_length": 49,
+      "response_length": 8951,
+      "timestamp": "2025-10-09T16:01:06.455965"
+    },
+    {
+      "operation": "query_new",
+      "duration_ms": 374.3717670440674,
+      "cache_hit": false,
+      "similarity_score": 0.0,
+      "prompt_length": 17,
+      "response_length": 52,
+      "timestamp": "2025-10-09T16:01:06.830362"
+    },
+    {
+      "operation": "query_original",
+      "duration_ms": 39.16811943054199,
+      "cache_hit": true,
+      "similarity_score": 0.99999994,
+      "prompt_length": 42,
+      "response_length": 8901,
+      "timestamp": "2025-10-09T16:01:06.869561"
+    },
+    {
+      "operation": "query_original",
+      "duration_ms": 38.43832015991211,
+      "cache_hit": true,
+      "similarity_score": 1.0,
+      "prompt_length": 38,
+      "response_length": 3212,
+      "timestamp": "2025-10-09T16:01:06.908032"
+    },
+    {
+      "operation": "query_new",
+      "duration_ms": 382.46726989746094,
+      "cache_hit": false,
+      "similarity_score": 0.0,
+      "prompt_length": 30,
+      "response_length": 35,
+      "timestamp": "2025-10-09T16:01:07.290518"
+    },
+    {
+      "operation": "query_original",
+      "duration_ms": 38.40374946594238,
+      "cache_hit": true,
+      "similarity_score": 0.99999994,
+      "prompt_length": 47,
+      "response_length": 5190,
+      "timestamp": "2025-10-09T16:01:07.328947"
+    },
+    {
+      "operation": "query_new",
+      "duration_ms": 843.6110019683838,
+      "cache_hit": false,
+      "similarity_score": 0.0,
+      "prompt_length": 41,
+      "response_length": 167,
+      "timestamp": "2025-10-09T16:01:08.172578"
+    },
+    {
+      "operation": "query_new",
+      "duration_ms": 1411.2677574157715,
+      "cache_hit": false,
+      "similarity_score": 0.0,
+      "prompt_length": 27,
+      "response_length": 471,
+      "timestamp": "2025-10-09T16:01:09.583872"
+    }
+  ],
+  "timestamp": "2025-10-09T16:01:09.585552"
+}
