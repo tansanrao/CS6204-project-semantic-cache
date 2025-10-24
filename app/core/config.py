@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     qdrant_collection_name: str = "cache_entries"
     semantic_cache_enabled: bool = False
     semantic_cache_bootstrap: bool = True
+    semantic_cache_bootstrap_timeout_seconds: float = 20.0
     embedding_model_name: str = "nomic-ai/nomic-embed-text-v1.5"
     embedding_model_mode: Literal["clustering", "search"] = "clustering"
     embedding_dimension: int = 768
@@ -57,6 +58,18 @@ class Settings(BaseSettings):
     semantic_cache_bucket_seconds: list[int] = Field(
         default_factory=lambda: [60, 300, 900, 1800, 3600, 7200]
     )
+    semantic_cache_policy_enabled: bool = True
+    semantic_cache_policy_type: Literal["linucb", "thompson"] = "linucb"
+    semantic_cache_policy_feature_dimension: int = 256
+    semantic_cache_policy_allow_feature_growth: bool = True
+    semantic_cache_policy_snapshot_path: str | None = None
+    semantic_cache_policy_autosave_interval: int = 50
+    semantic_cache_linucb_alpha: float = 0.6
+    semantic_cache_linucb_regularization: float = 1.0
+    semantic_cache_linucb_min_propensity: float = 1e-3
+    semantic_cache_ts_regularization: float = 1.0
+    semantic_cache_ts_sampling_variance: float = 1.0
+    semantic_cache_ts_min_propensity: float = 1e-3
 
     @classmethod
     def settings_customise_sources(

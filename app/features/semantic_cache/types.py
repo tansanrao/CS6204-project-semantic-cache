@@ -87,7 +87,117 @@ class CacheLookupResult:
 
     status: CacheDecisionStatus
     query: CacheQuery
+    neighbor_stale_rate: float | None = None
     hit: CacheHit | None = None
     stale_entry: CacheEntry | None = None
     stale_similarity: float | None = None
     reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class TTLDecisionCreate:
+    """Payload for recording a TTL bucket decision."""
+
+    id: UUID
+    cache_entry_id: UUID | None
+    request_fingerprint: str
+    prompt_hash: str
+    policy_name: str
+    policy_version: str
+    ttl_bucket: int
+    features: dict[str, Any]
+    propensity: float | None
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class TTLDecision:
+    """Persisted TTL decision record."""
+
+    id: UUID
+    cache_entry_id: UUID | None
+    request_fingerprint: str
+    prompt_hash: str
+    policy_name: str
+    policy_version: str
+    ttl_bucket: int
+    features: dict[str, Any]
+    propensity: float | None
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class FeedbackEventCreate:
+    """Record user or evaluator feedback for a cache entry."""
+
+    id: UUID
+    cache_entry_id: UUID
+    ttl_decision_id: UUID | None
+    event_type: str
+    score: float
+    details: dict[str, Any] | None
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyRewardCreate:
+    """Persist reward attribution for a TTL decision."""
+
+    id: UUID
+    ttl_decision_id: UUID
+    reward: float
+    attribution_rule: str
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class RefreshCandidate:
+    """Cache entry scheduled for a freshness check."""
+
+    id: UUID
+    prompt_text: str
+    response_payload: dict[str, Any]
+    created_at: datetime
+    expires_at: datetime
+    ttl_bucket: int
+    ttl_seconds: int
+    hit_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class BucketAggregate:
+    """Aggregated metrics for TTL decisions grouped by bucket."""
+
+    ttl_bucket: int
+    decision_count: int
+    feedback_count: int
+    avg_reward: float | None
+
+
+class RefreshEventType(StrEnum):
+    """Enumerate feedback event types for refresh evaluations."""
+
+    STALE_CONFIRMED = "stale_detected"
+    FRESH_CONFIRMED = "stale_disproved"
+    ERROR = "refresh_failed"
+
+
+@dataclass(frozen=True, slots=True)
+class RefreshOutcome:
+    """Result from evaluating a cache entry's freshness."""
+
+    cache_entry_id: UUID
+    ttl_decision_id: UUID | None
+    stale: bool
+    elapsed_seconds: int
+    ttl_seconds: int
+    ttl_bucket: int
+    semantic_delta: float
+    fact_delta: float
+    cost_savings: float
+    latency_savings: float
+    feedback_event: RefreshEventType
+    feedback_score: float
+    feedback_details: dict[str, Any] | None
+    obtained_at: datetime
+    bonus_applicable: bool = False

@@ -31,6 +31,7 @@ class _InMemoryRepository:
 
     def __init__(self) -> None:
         self._entries: dict[UUID, CacheEntry] = {}
+        self._prompt_stale_rates: dict[str, float] = {}
 
     async def create_schema(self) -> None:  # pragma: no cover - nothing to do
         return
@@ -64,6 +65,35 @@ class _InMemoryRepository:
             entry,
             hit_count=entry.hit_count + 1,
             updated_at=accessed_at,
+        )
+
+    def set_prompt_stale_rate(self, prompt_hash: str, rate: float) -> None:
+        self._prompt_stale_rates[prompt_hash] = rate
+
+    async def fetch_prompt_stale_rates(
+        self, prompt_hashes, *, lookback=timedelta(days=14)
+    ):
+        return {
+            prompt_hash: self._prompt_stale_rates[prompt_hash]
+            for prompt_hash in prompt_hashes
+            if prompt_hash in self._prompt_stale_rates
+        }
+
+    async def update_entry_ttl(
+        self,
+        entry_id: UUID,
+        *,
+        ttl_bucket: int,
+        ttl_seconds: int,
+        expires_at: datetime,
+    ) -> None:
+        entry = self._entries[entry_id]
+        self._entries[entry_id] = replace(
+            entry,
+            ttl_bucket=ttl_bucket,
+            ttl_seconds=ttl_seconds,
+            expires_at=expires_at,
+            updated_at=expires_at,
         )
 
 
@@ -118,7 +148,9 @@ class _InMemoryVectorStore:
         return matches[:limit]
 
 
-def _build_service(embed_dim: int = 3) -> SemanticCacheService:
+def _build_service(
+    embed_dim: int = 3, *, policy_enabled: bool = True
+) -> SemanticCacheService:
     repository = _InMemoryRepository()
     vector_store = _InMemoryVectorStore()
     embedder = _StaticEmbedder([0.1] * embed_dim)
@@ -127,6 +159,9 @@ def _build_service(embed_dim: int = 3) -> SemanticCacheService:
         search_limit=3,
         ttl_seconds=(30, 60, 120),
         default_ttl_bucket=1,
+        policy_enabled=policy_enabled,
+        policy_feature_dimension=16,
+        policy_autosave_interval=1,
     )
     return SemanticCacheService(
         repository=repository,  # type: ignore[arg-type]
@@ -170,6 +205,42 @@ async def test_store_and_lookup_round_trip() -> None:
     assert hit.hit.entry.response_payload == response_payload
     assert hit.hit.entry.hit_count == 1
     assert hit.hit.similarity >= 0.5
+
+
+@pytest.mark.anyio
+async def test_lookup_includes_neighbor_stale_rate() -> None:
+    """Nearest-neighbor stale-rate estimates should surface on lookup results."""
+    service = _build_service()
+    payload = {
+        "model": "gpt-test",
+        "messages": [
+            {"role": "system", "content": "keep it short"},
+            {"role": "user", "content": "latest earnings for ACME"},
+        ],
+    }
+    query = service.normalize_request("v1/chat/completions", payload)
+    assert query is not None
+
+    response_payload = {
+        "id": "completion-3",
+        "choices": [{"message": {"content": "ACME earnings summary"}}],
+    }
+    await service.store(query, response_payload)
+
+    repository = service._repository  # type: ignore[attr-defined]
+    repository.set_prompt_stale_rate(query.prompt_hash, 0.6)  # type: ignore[attr-defined]
+
+    result = await service.lookup(query)
+    assert result.status is CacheDecisionStatus.HIT
+    assert result.neighbor_stale_rate == pytest.approx(0.6)
+
+
+@pytest.mark.anyio
+async def test_select_ttl_bucket_returns_propensity() -> None:
+    service = _build_service()
+    bucket, propensity = await service.select_ttl_bucket({"bias": 1.0})
+    assert 0 <= bucket < len(service._settings.ttl_seconds)
+    assert 0.0 < propensity <= 1.0
 
 
 @pytest.mark.anyio

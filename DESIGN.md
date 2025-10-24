@@ -23,6 +23,12 @@ We use a **contextual bandit** over 6 discrete actions (TTL buckets). Online lea
 1. **LinUCB** (fast, interpretable): per-action linear model with uncertainty bonus.
 2. **Thompson Sampling (Bayesian linear regression)**: per-action posterior over weights; sample and pick argmax.
 
+*Implementation note (22 Oct 2025):* Both LinUCB and Thompson Sampling are wired through a shared `TTLPolicyManager`. Runtime selection is controlled via `semantic_cache_policy_type`, with snapshots persisted whenever policy weights are updated.
+
+### 1.1 Runtime policy orchestration
+
+`TTLPolicyManager` is the in-memory controller that exposes bandit decisions to the proxy. It coordinates feature indexing, computes propensities for IPS / DR evaluation, and persists checkpoints (JSON snapshots) on a configurable cadence. The proxy calls `SemanticCacheService.select_ttl_bucket(...)` during cache misses, which delegates to the manager for bucket selection and propensity logging.
+
 **Warm start:** Pretrain a multiclass logistic classifier from heuristics and offline logs; use its weights as prior for Bayesian TS or as initial θ in LinUCB.
 
 ---
@@ -102,6 +108,8 @@ Goal: cheaply validate whether cached content has gone stale and repair it.
   * **Entry-level extension:** increase `expires_at` by `λ_extend * remaining_or_full_TTL` (e.g., 1.5× up to B_{i+1} cap) and log `feedback_event` with positive score.
   * **Policy hint:** emit positive reward for larger buckets in similar contexts (see reward shaping §6.3).
 
+*Implementation note (22 Oct 2025):* When `RefreshOutcome.bonus_applicable` is set, `SemanticCacheService._maybe_extend_ttl` automatically promotes the entry to the next bucket (capped at the highest bucket) and records the adjustment inside refresh feedback metadata.
+
 ### 5.3 “TTLs too large” detection (population level)
 
 Signals and actions:
@@ -111,6 +119,12 @@ Signals and actions:
 * **Early-stale ratio:** proportion of stale detections before 25% of TTL elapsed. If > threshold, downshift bucket suggestions for similar contexts.
 * **Drift detector:** monitor embedding centroid drift of web snapshots referenced by prompts; rising drift correlates with shorter optimal TTL.
 * **Canary prompts:** maintain a small set of recurring prompts per domain; bisection search TTL by doubling/halving to find safe upper bounds.
+
+Implementation notes (22 Oct 2025):
+
+* `app/ingest/ttl_refresh/worker.py` coordinates refresh batches using the repository helpers and downstream pipelines.
+* `SemanticCacheService.log_refresh_outcome` records refresh feedback (`feedback_event`) and reward attribution (`policy_reward`) for policy updates.
+* Early-stale guardrails shrink TTL buckets automatically via `SemanticCacheService._apply_guardrails`, which triggers whenever a stale detection occurs before 25% of the assigned TTL has elapsed. Guardrail actions are annotated in refresh feedback for observability.
 
 ---
 
@@ -301,6 +315,12 @@ We expose a lightweight FastAPI service that forwards OpenAI-compatible requests
 * Docker compose stacks remain unchanged; the proxy binds to the FastAPI HTTP port
   (default 8000) and forwards to the existing vLLM gateway.
 
+### Observability & logging
+
+* Logging now uses Python's default configuration (`logging.basicConfig(level=logging.INFO)` in `app/main.py`), relying on uvicorn/FastAPI's built-in access logs.
+* `ProxyService` emits info-level `proxy decision` lines summarizing cache/TTL outcomes, and semantic cache + policy components log through their module loggers exclusively at info, warning, or error levels.
+* Request-scoped context IDs were removed; `request.state.cache_context` is cleaned up inside `ProxyService.forward` once a request completes.
+
 ---
 
 ## 13) Semantic Cache Implementation Snapshot — 22 Oct 2025
@@ -318,7 +338,7 @@ We expose a lightweight FastAPI service that forwards OpenAI-compatible requests
 *Application wiring*
 
 * `ProxyService.forward` now normalizes OpenAI chat/completions requests, probes Qdrant (k=5) for hits above `τ_hit=0.86`, and short-circuits the response path with cached payloads (adds `X-Cache` headers). On misses, successful JSON responses are persisted back through Postgres + Qdrant.
-* Startup (`app.main.create_app`) initializes the semantic cache stack (async SQLAlchemy engine, `QdrantClient`, embedder) and optionally runs bootstrap migrations before the server begins accepting traffic.
+* Startup (`app.main.create_app`) initializes the semantic cache stack (async SQLAlchemy engine, `QdrantClient`, embedder) and runs Alembic migrations (`alembic upgrade head`) against `PROXY_DATABASE_DSN` when `semantic_cache_bootstrap=True` before the server begins accepting traffic.
 
 *Configurability*
 

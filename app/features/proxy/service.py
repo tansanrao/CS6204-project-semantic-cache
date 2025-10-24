@@ -10,24 +10,34 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any
 from urllib.parse import urljoin
+from uuid import UUID
 
-from asyncpg.exceptions import UniqueViolationError
 import httpx
+from asyncpg.exceptions import UniqueViolationError
 from fastapi import HTTPException, Request, status
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlalchemy.exc import IntegrityError
 
 from app.core.config import Settings
+from app.features.semantic_cache.policy import (
+    ExtractionContext,
+    FeatureExtractor,
+    FeatureVector,
+    build_default_entity_recognizer,
+)
 from app.features.semantic_cache.service import SemanticCacheService
 from app.features.semantic_cache.types import (
-    CacheEntry,
     CacheDecisionStatus,
+    CacheEntry,
     CacheLookupResult,
     CacheQuery,
 )
 
-logger = logging.getLogger(__name__)
-_LOGGER_CONFIGURED = False
+logger = logging.getLogger('uvicorn.error')
+logger.setLevel(logging.INFO)
+
+POLICY_NAME = "linucb"
+POLICY_VERSION = "0.1.0"
 
 HOP_BY_HOP_HEADERS = {
     "connection",
@@ -56,6 +66,10 @@ class CacheContext:
     stored: bool | None = None
     backend_status_code: int | None = None
     ttl_bucket: int | None = None
+    feature_vector: FeatureVector | None = None
+    policy_propensity: float | None = None
+    cache_entry_id: UUID | None = None
+    ttl_decision_id: UUID | None = None
 
     def add_reason(self, reason: str) -> None:
         if reason not in self.reasons:
@@ -75,10 +89,14 @@ class ProxyService:
         client: httpx.AsyncClient,
         *,
         semantic_cache: SemanticCacheService | None = None,
+        feature_extractor: FeatureExtractor | None = None,
     ) -> None:
         self._settings = settings
         self._client = client
         self._semantic_cache = semantic_cache
+        self._feature_extractor = feature_extractor or FeatureExtractor(
+            entity_recognizer=build_default_entity_recognizer()
+        )
 
     async def forward(self, path: str, request: Request) -> Response:
         """Proxy the incoming request to the backend and return its response."""
@@ -94,60 +112,112 @@ class ProxyService:
             enabled=self._semantic_cache is not None,
             status=CacheDecisionStatus.MISS,
         )
+        setattr(request.state, "cache_context", cache_context)
         start_time = perf_counter()
 
-        if self._semantic_cache:
-            cache_query = self._maybe_prepare_cache_query(path, request, body)
-            if cache_query is None:
-                cache_context.add_reason("not_eligible")
+        try:
+            if self._semantic_cache:
+                cache_query = self._maybe_prepare_cache_query(path, request, body)
+                if cache_query is None:
+                    cache_context.add_reason("not_eligible")
+                else:
+                    cache_context.query = cache_query
+                    cache_result = await self._semantic_cache.lookup(cache_query)
+                    cache_context.result = cache_result
+                    cache_context.status = cache_result.status
+                    cache_context.extend_reasons(cache_result.reasons)
+                    if cache_result.status is CacheDecisionStatus.MISS:
+                        feature_context = ExtractionContext(
+                            prompt_hash=cache_query.prompt_hash,
+                            route=self._normalize_route(cache_query.request_path),
+                            nearest_neighbor_stale_rate=cache_result.neighbor_stale_rate,
+                        )
+                        feature_vector = self._feature_extractor.extract(
+                            cache_query.prompt_text,
+                            context=feature_context,
+                        )
+                        cache_context.feature_vector = feature_vector
+                        bucket, propensity = await self._semantic_cache.select_ttl_bucket(  # type: ignore[union-attr]
+                            feature_vector.as_dict()
+                        )
+                        cache_context.ttl_bucket = bucket
+                        cache_context.policy_propensity = propensity
+                    if cache_result.hit is not None:
+                        cache_context.ttl_bucket = cache_result.hit.entry.ttl_bucket
+                    elif cache_result.stale_entry is not None:
+                        cache_context.ttl_bucket = cache_result.stale_entry.ttl_bucket
+                    if (
+                        cache_result.status is CacheDecisionStatus.HIT
+                        and cache_result.hit
+                    ):
+                        cache_context.cache_entry_id = cache_result.hit.entry.id
+                        response = self._as_cache_response(cache_result, cache_context)
+                        await self._log_feedback_event(
+                            entry_id=cache_result.hit.entry.id,
+                            query=cache_query,
+                            event_type="cache_hit_served",
+                            score=1.0,
+                            details={
+                                "request_fingerprint": cache_query.request_fingerprint,
+                                "prompt_hash": cache_query.prompt_hash,
+                                "similarity": cache_result.hit.similarity,
+                            },
+                        )
+                        cache_context.backend_status_code = status.HTTP_200_OK
+                        latency_ms = (perf_counter() - start_time) * 1000
+                        self._log_cache_decision(cache_context, latency_ms)
+                        return response
+                    if (
+                        cache_result.status is CacheDecisionStatus.STALE_HIT
+                        and cache_result.stale_entry is not None
+                    ):
+                        cache_context.cache_entry_id = cache_result.stale_entry.id
+                        await self._log_feedback_event(
+                            entry_id=cache_result.stale_entry.id,
+                            query=cache_query,
+                            event_type="cache_stale_hit",
+                            score=0.0,
+                            details={
+                                "request_fingerprint": cache_query.request_fingerprint,
+                                "prompt_hash": cache_query.prompt_hash,
+                                "similarity": cache_result.stale_similarity,
+                            },
+                        )
             else:
-                cache_context.query = cache_query
-                cache_result = await self._semantic_cache.lookup(cache_query)
-                cache_context.result = cache_result
-                cache_context.status = cache_result.status
-                cache_context.extend_reasons(cache_result.reasons)
-                if cache_result.hit is not None:
-                    cache_context.ttl_bucket = cache_result.hit.entry.ttl_bucket
-                elif cache_result.stale_entry is not None:
-                    cache_context.ttl_bucket = cache_result.stale_entry.ttl_bucket
-                if cache_result.status is CacheDecisionStatus.HIT and cache_result.hit:
-                    response = self._as_cache_response(cache_result, cache_context)
-                    cache_context.backend_status_code = status.HTTP_200_OK
+                cache_context.add_reason("semantic_cache_disabled")
+
+            httpx_request = self._client.build_request(
+                method=request.method,
+                url=backend_url,
+                params=query_params,
+                headers=prepared_headers,
+                content=body if body else None,
+            )
+
+            backend_response = await self._client.send(httpx_request, stream=True)
+            try:
+                cache_context.backend_status_code = backend_response.status_code
+                if _is_streaming_response(backend_response):
+                    response = self._as_streaming_response(backend_response)
+                    cache_header = self._infer_cache_header(cache_context)
+                    response.headers.setdefault("X-Cache", cache_header)
+                    response.headers["X-Cache-Status"] = cache_context.status.value
                     latency_ms = (perf_counter() - start_time) * 1000
                     self._log_cache_decision(cache_context, latency_ms)
                     return response
-        else:
-            cache_context.add_reason("semantic_cache_disabled")
-
-        httpx_request = self._client.build_request(
-            method=request.method,
-            url=backend_url,
-            params=query_params,
-            headers=prepared_headers,
-            content=body if body else None,
-        )
-
-        backend_response = await self._client.send(httpx_request, stream=True)
-        try:
-            cache_context.backend_status_code = backend_response.status_code
-            if _is_streaming_response(backend_response):
-                response = self._as_streaming_response(backend_response)
-                cache_header = self._infer_cache_header(cache_context)
-                response.headers.setdefault("X-Cache", cache_header)
-                response.headers["X-Cache-Status"] = cache_context.status.value
+                response = await self._as_standard_response(
+                    backend_response,
+                    cache_context=cache_context,
+                )
                 latency_ms = (perf_counter() - start_time) * 1000
                 self._log_cache_decision(cache_context, latency_ms)
                 return response
-            response = await self._as_standard_response(
-                backend_response,
-                cache_context=cache_context,
-            )
-            latency_ms = (perf_counter() - start_time) * 1000
-            self._log_cache_decision(cache_context, latency_ms)
-            return response
-        except Exception:
-            await backend_response.aclose()
-            raise
+            except Exception:
+                await backend_response.aclose()
+                raise
+        finally:
+            if hasattr(request.state, "cache_context"):
+                delattr(request.state, "cache_context")
 
     def _authorize(self, request: Request) -> str | None:
         """Validate inbound API key if configured."""
@@ -245,7 +315,9 @@ class ProxyService:
             )
         elif backend_response.status_code != status.HTTP_200_OK:
             cache_context.add_reason("non_success_status")
-        cache_context.stored = (stored_entry is not None) if self._semantic_cache else None
+        cache_context.stored = (
+            (stored_entry is not None) if self._semantic_cache else None
+        )
         if stored_entry is not None:
             cache_context.ttl_bucket = stored_entry.ttl_bucket
 
@@ -315,13 +387,21 @@ class ProxyService:
         if payload is None:
             return None
         try:
-            stored_entry = await self._semantic_cache.store(query, payload)  # type: ignore[union-attr]
+            stored_entry = await self._semantic_cache.store(  # type: ignore[union-attr]
+                query,
+                payload,
+                ttl_bucket=cache_context.ttl_bucket,
+            )
         except IntegrityError as exc:  # pragma: no cover - defensive fallback
             if isinstance(getattr(exc, "orig", None), UniqueViolationError):
                 cache_context.add_reason("duplicate_request_fingerprint")
+                logger.info(
+                    "Cache store skipped duplicate request fingerprint=%s",
+                    query.request_fingerprint,
+                )
             else:
                 cache_context.add_reason("store_integrity_error")
-                logger.debug(
+                logger.error(
                     "Cache store integrity error (%s): %s",
                     exc.__class__.__name__,
                     exc,
@@ -329,12 +409,25 @@ class ProxyService:
             return None
         except Exception as exc:  # pragma: no cover - defensive fallback
             cache_context.add_reason("store_error")
-            logger.debug(
+            logger.error(
                 "Cache store failed (%s): %s",
                 exc.__class__.__name__,
                 exc,
             )
             return None
+        neighbor_rate = (
+            cache_context.result.neighbor_stale_rate if cache_context.result else None
+        )
+        cache_context.ttl_bucket = stored_entry.ttl_bucket
+        cache_context.cache_entry_id = stored_entry.id
+        decision_id = await self._log_ttl_decision(
+            query=query,
+            entry=stored_entry,
+            neighbor_stale_rate=neighbor_rate,
+            feature_vector=cache_context.feature_vector,
+            propensity=cache_context.policy_propensity,
+        )
+        cache_context.ttl_decision_id = decision_id
         return stored_entry
 
     def _as_streaming_response(
@@ -349,6 +442,67 @@ class ProxyService:
             headers=headers,
             media_type=headers.get("content-type"),
         )
+
+    async def _log_ttl_decision(
+        self,
+        *,
+        query: CacheQuery,
+        entry: CacheEntry,
+        neighbor_stale_rate: float | None = None,
+        feature_vector: FeatureVector | None = None,
+        propensity: float | None = None,
+    ) -> UUID | None:
+        """Persist the TTL decision generated for a cache miss."""
+        if self._semantic_cache is None:
+            return None
+
+        vector = feature_vector
+        if vector is None:
+            context = ExtractionContext(
+                prompt_hash=query.prompt_hash,
+                route=self._normalize_route(query.request_path),
+                nearest_neighbor_stale_rate=neighbor_stale_rate,
+            )
+            vector = self._feature_extractor.extract(
+                query.prompt_text,
+                context=context,
+            )
+        decision_id = await self._semantic_cache.log_ttl_decision(
+            query=query,
+            entry=entry,
+            policy_name=POLICY_NAME,
+            policy_version=POLICY_VERSION,
+            ttl_bucket=entry.ttl_bucket,
+            features=vector.as_dict(),
+            propensity=propensity,
+        )
+        return decision_id
+
+    async def _log_feedback_event(
+        self,
+        *,
+        entry_id: UUID,
+        query: CacheQuery,
+        event_type: str,
+        score: float,
+        details: dict[str, Any],
+    ) -> None:
+        """Record cache feedback signals for policy learning."""
+        if self._semantic_cache is None:
+            return
+        await self._semantic_cache.log_feedback_event(
+            cache_entry_id=entry_id,
+            event_type=event_type,
+            score=score,
+            details=details,
+            ttl_decision_id=None,
+        )
+
+    @staticmethod
+    def _normalize_route(path: str) -> str:
+        """Normalize request paths into feature-friendly tokens."""
+        cleaned = path.strip().lower().lstrip("/")
+        return cleaned.replace("/", "_") or "root"
 
     def _infer_cache_header(self, context: CacheContext) -> str:
         """Translate cache status into an HTTP header value."""
@@ -385,6 +539,7 @@ class ProxyService:
             entry = context.result.hit.entry
             metadata["cache"] = {
                 "source": "cache",
+                "entry_id": str(entry.id),
                 "similarity": context.result.hit.similarity,
                 "ttl_bucket": entry.ttl_bucket,
                 "ttl_seconds": entry.ttl_seconds,
@@ -404,6 +559,7 @@ class ProxyService:
             entry = context.result.stale_entry
             metadata["cache"] = {
                 "source": "stale_candidate",
+                "entry_id": str(entry.id),
                 "ttl_bucket": entry.ttl_bucket,
                 "ttl_seconds": entry.ttl_seconds,
                 "expired_at": entry.expires_at.isoformat(),
@@ -414,21 +570,36 @@ class ProxyService:
             metadata["cache"] = {
                 "source": "backend",
                 "stored": bool(context.stored) if context.stored is not None else None,
+                "entry_id": (
+                    str(context.cache_entry_id) if context.cache_entry_id else None
+                ),
             }
 
         if context.reasons:
             metadata["reasons"] = list(context.reasons)
 
+        metadata["decision"] = {
+            "ttl_bucket": context.ttl_bucket,
+            "policy_name": POLICY_NAME
+            if context.policy_propensity is not None
+            else None,
+            "policy_version": POLICY_VERSION
+            if context.policy_propensity is not None
+            else None,
+            "propensity": context.policy_propensity,
+            "ttl_decision_id": (
+                str(context.ttl_decision_id) if context.ttl_decision_id else None
+            ),
+        }
+
         return metadata
 
     def _log_cache_decision(self, context: CacheContext, latency_ms: float) -> None:
         """Emit a structured log message for cache decisions."""
-        _ensure_logger_configured()
-        if not logger.isEnabledFor(logging.INFO):
-            return
-
         path = context.query.request_path if context.query else context.request_path
         model = context.query.model if context.query else "unknown"
+
+        bucket_value = context.ttl_bucket if context.ttl_bucket is not None else "n/a"
 
         parts: list[str] = [
             "proxy decision",
@@ -436,7 +607,7 @@ class ProxyService:
             f"path={path or '/'}",
             f"model={model}",
             f"decision={context.status.value}",
-            f"ttl_bucket={context.ttl_bucket if context.ttl_bucket is not None else 'n/a'}",
+            f"ttl_bucket={bucket_value}",
             f"latency_ms={latency_ms:.2f}",
         ]
 
@@ -445,6 +616,12 @@ class ProxyService:
         if context.stored is not None:
             parts.append(f"stored={context.stored}")
         parts.append(f"cache_enabled={context.enabled}")
+        if context.cache_entry_id is not None:
+            parts.append(f"cache_entry_id={context.cache_entry_id}")
+        if context.ttl_decision_id is not None:
+            parts.append(f"ttl_decision_id={context.ttl_decision_id}")
+        if context.policy_propensity is not None:
+            parts.append(f"propensity={context.policy_propensity:.4f}")
 
         if (
             context.status is CacheDecisionStatus.HIT
@@ -458,7 +635,9 @@ class ProxyService:
             and context.result
             and context.result.stale_entry is not None
         ):
-            parts.append(f"stale_similarity={context.result.stale_similarity or 0.0:.4f}")
+            parts.append(
+                f"stale_similarity={context.result.stale_similarity or 0.0:.4f}"
+            )
             parts.append(
                 f"stale_expires_at={context.result.stale_entry.expires_at.isoformat()}"
             )
@@ -496,27 +675,3 @@ def _is_streaming_response(response: httpx.Response) -> bool:
     """Detect if the backend response should be streamed."""
     content_type = response.headers.get("content-type", "")
     return content_type.startswith("text/event-stream")
-
-
-def _ensure_logger_configured() -> None:
-    """Attach handlers to the module logger so INFO logs surface in uvicorn."""
-    global _LOGGER_CONFIGURED
-    if _LOGGER_CONFIGURED or logger.handlers:
-        return
-
-    for candidate in ("uvicorn.error", "uvicorn"):
-        parent = logging.getLogger(candidate)
-        if parent.handlers:
-            for handler in parent.handlers:
-                logger.addHandler(handler)
-            break
-
-    if not logger.handlers:
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter("%(levelname)s %(message)s")
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-
-    logger.setLevel(logging.INFO)
-    logger.propagate = False
-    _LOGGER_CONFIGURED = True

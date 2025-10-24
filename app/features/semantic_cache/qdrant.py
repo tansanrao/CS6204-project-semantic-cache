@@ -90,7 +90,6 @@ class QdrantVectorStore:
         if self._client.collection_exists(self._collection_name):
             self._validate_collection()
             return
-
         vectors_config = rest.VectorParams(
             size=self._dimension,
             distance=rest.Distance.COSINE,

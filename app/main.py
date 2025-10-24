@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from contextlib import asynccontextmanager
@@ -22,8 +23,8 @@ from app.features.semantic_cache.service import (
     SemanticCacheSettings,
 )
 
-logger = logging.getLogger(__name__)
-
+logger = logging.getLogger('uvicorn.error')
+logger.setLevel(logging.INFO)
 
 def create_app(
     settings: Settings | None = None,
@@ -135,6 +136,18 @@ async def _initialize_semantic_cache(
         search_limit=settings.semantic_cache_search_limit,
         ttl_seconds=tuple(settings.semantic_cache_bucket_seconds),
         default_ttl_bucket=settings.semantic_cache_default_ttl_bucket,
+        policy_enabled=settings.semantic_cache_policy_enabled,
+        policy_type=settings.semantic_cache_policy_type,
+        policy_feature_dimension=settings.semantic_cache_policy_feature_dimension,
+        policy_allow_feature_growth=settings.semantic_cache_policy_allow_feature_growth,
+        policy_snapshot_path=settings.semantic_cache_policy_snapshot_path,
+        policy_autosave_interval=settings.semantic_cache_policy_autosave_interval,
+        linucb_alpha=settings.semantic_cache_linucb_alpha,
+        linucb_regularization=settings.semantic_cache_linucb_regularization,
+        linucb_min_propensity=settings.semantic_cache_linucb_min_propensity,
+        ts_regularization=settings.semantic_cache_ts_regularization,
+        ts_sampling_variance=settings.semantic_cache_ts_sampling_variance,
+        ts_min_propensity=settings.semantic_cache_ts_min_propensity,
     )
     service = SemanticCacheService(
         repository=repository,
@@ -148,9 +161,24 @@ async def _initialize_semantic_cache(
 
     if settings.semantic_cache_bootstrap:
         try:
-            await service.bootstrap()
+            await asyncio.wait_for(
+                service.bootstrap(),
+                timeout=settings.semantic_cache_bootstrap_timeout_seconds,
+            )
+        except TimeoutError:
+            logger.error(
+                "Semantic cache bootstrap timed out after %.1f seconds.",
+                settings.semantic_cache_bootstrap_timeout_seconds,
+            )
+            await engine.dispose()
+            qdrant_client.close()
+            return None, None, None
         except Exception as exc:  # pragma: no cover - startup guard
-            logger.error("Semantic cache bootstrap failed: %s", exc, exc_info=True)
+            logger.error(
+                "Semantic cache bootstrap failed (%s): %s",
+                exc.__class__.__name__,
+                exc,
+            )
             await engine.dispose()
             qdrant_client.close()
             return None, None, None

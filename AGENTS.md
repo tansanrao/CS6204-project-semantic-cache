@@ -2,6 +2,7 @@
 
 ## Project Structure & Module Organization
 - Use `DESIGN.md` as the authoritative product and systems brief; keep it updated when architecture shifts.
+- Check `IMPLEMENTATION_PLAN.md` before starting work on contextual bandit or TTL policy tasks and update it with progress as you go.
 - Infrastructure manifests live in `db-stack/` (Postgres, Qdrant) and `llm-stack/` (vLLM gateway plus Open WebUI). Update compose files before altering shared ports or service names.
 - Place Python application packages under a top-level module (e.g., `app/`) with subpackages per domain (`features/`, `policies/`, `ingest/`). Mirror business logic tests under `tests/` using the same package structure.
 - Store large assets or notebooks outside the repository and reference them via documentation links; keep checked-in data under 1 MB files in a dedicated `data/` subfolder if unavoidable.
@@ -9,6 +10,7 @@
 ## Build, Test, and Development Commands
 - `uv sync --frozen --python 3.11` — install dependencies into `.venv/` using the pinned `pyproject.toml`.
 - `uv run python -m app.main` — run the primary service entry point; adjust the module path for new executables.
+- `uv run alembic upgrade head` — apply database migrations (automatically invoked on startup when `semantic_cache_bootstrap=true`).
 - `docker compose -f db-stack/docker-compose.yaml up -d` — start Postgres and Qdrant for local development; pair with `down` when finished.
 - `docker compose -f llm-stack/docker-compose.yaml up -d` — launch the local LLM gateway and Open WebUI for manual evaluation.
 
