@@ -9,7 +9,7 @@ import logging
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Any, Callable, Iterable
+from typing import Any, Awaitable, Callable, Iterable
 from urllib.parse import urljoin
 from uuid import UUID
 
@@ -97,7 +97,7 @@ class ProxyService:
         client: httpx.Client,
         semantic_cache: SemanticCacheService | None = None,
         feature_extractor: FeatureExtractor | None = None,
-        async_runner: Callable[[Any], Any] | None = None,
+        async_runner: Callable[[Awaitable[Any]], Any] | None = None,
     ) -> None:
         self._settings = settings
         self._client = client

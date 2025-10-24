@@ -47,7 +47,7 @@ class CacheRepository:
         backend = self._engine.url.get_backend_name()
         LOG.info(
             "semantic_cache.repository.bootstrap_start",
-            extra={"extra": {"backend": backend}},
+            extra={"kv": {"backend": backend}},
         )
 
         async with self._engine.begin() as connection:
@@ -68,7 +68,7 @@ class CacheRepository:
             )
         LOG.info(
             "semantic_cache.repository.bootstrap_complete",
-            extra={"extra": {"backend": backend}},
+            extra={"kv": {"backend": backend}},
         )
 
     async def insert_entry(self, payload: CacheEntryCreate) -> None:
@@ -242,7 +242,7 @@ class CacheRepository:
         LOG.info(
             "semantic_cache.repository.refresh_candidates",
             extra={
-                "extra": {
+                "kv": {
                     "count": len(rows),
                     "limit": limit,
                     "lookback_hours": round(lookback.total_seconds() / 3600.0, 2),
@@ -322,7 +322,7 @@ class CacheRepository:
         LOG.info(
             "semantic_cache.repository.bucket_aggregates",
             extra={
-                "extra": {
+                "kv": {
                     "bucket_count": len(aggregates),
                     "lookback_hours": round(lookback.total_seconds() / 3600.0, 2),
                 }
@@ -373,7 +373,7 @@ class CacheRepository:
         LOG.info(
             "semantic_cache.repository.stale_rate_fetch",
             extra={
-                "extra": {
+                "kv": {
                     "prompt_count": len(unique_hashes),
                     "result_rows": len(rows),
                     "lookback_hours": None

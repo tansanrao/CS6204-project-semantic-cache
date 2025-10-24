@@ -47,25 +47,36 @@ class KeyValueFormatter(logging.Formatter):
 
 def setup_logging(*, level: str = "INFO") -> None:
     """Configure root logging with the key=value formatter."""
+    # Configure root logger
     root = logging.getLogger()
-    preserved = [
-        handler
-        for handler in root.handlers
-        if handler.__class__.__module__.startswith("_pytest")
-        or handler.__class__.__name__ == "LogCaptureHandler"
-    ]
-    for handler in list(root.handlers):
-        if handler not in preserved:
-            root.removeHandler(handler)
-    handler = logging.StreamHandler(sys.stdout)
-    handler.addFilter(RequestIdFilter())
-    handler.setFormatter(KeyValueFormatter())
-    root.addHandler(handler)
+    root.handlers.clear()
+    root_handler = logging.StreamHandler(sys.stdout)
+    root_handler.addFilter(RequestIdFilter())
+    root_handler.setFormatter(KeyValueFormatter())
+    root.addHandler(root_handler)
     root.setLevel(level.upper())
 
     logging.captureWarnings(True)
     for noisy in ("httpx", "sqlalchemy.engine", "urllib3"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+
+    # IMPORTANT: Also add handlers directly to app loggers to survive other logging reconfigurations
+    # This ensures our formatter works even if something else modifies the root logger
+    for app_logger_name in ("app", "app.semantic_cache", "app.semantic_cache.repository", "app.cache", "app.proxy", "app.policy"):
+        app_logger = logging.getLogger(app_logger_name)
+        app_logger.setLevel(level.upper())
+        # CRITICAL: Ensure the logger is not disabled
+        app_logger.disabled = False
+        # Clear any existing handlers on this logger
+        app_logger.handlers.clear()
+        # Add our custom handler directly to this logger
+        app_handler = logging.StreamHandler(sys.stdout)
+        app_handler.addFilter(RequestIdFilter())
+        app_handler.setFormatter(KeyValueFormatter())
+        app_handler.setLevel(logging.NOTSET)  # Let the logger level control filtering
+        app_logger.addHandler(app_handler)
+        # Don't propagate to root to avoid duplicate logs
+        app_logger.propagate = False
 
 
 def with_kv(event: str, **fields: Any) -> dict[str, Any]:

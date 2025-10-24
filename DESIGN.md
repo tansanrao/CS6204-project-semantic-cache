@@ -313,9 +313,9 @@ We expose a lightweight Flask service that fronts the vLLM gateway while preserv
 
 ### Observability & logging
 
-* Concise key=value logging is configured via `app/logging.py`, which installs request hooks and a formatter that emits `timestamp level logger event key=value...` lines.
+* Concise key=value logging is configured via `app/logging.py`, which installs request hooks and a formatter that emits `timestamp level logger event key=value...` lines. Namespace-specific handlers (`app.proxy`, `app.semantic_cache`, `app.semantic_cache.repository`, `app.policy`) are attached explicitly so INFO logs survive any root logger reconfiguration that happens during reloads.
 * Flask `before_request`/`after_request` handlers assign or propagate `X-Request-ID`, log lifecycle events (`proxy.request_start`, `proxy.request_complete`), and append the request id to responses.
-* Proxy, semantic cache, repository, and policy modules emit scoped events (for example `proxy.cache_decision`, `semantic_cache.lookup_decision`, `semantic_cache.policy_reward`) by attaching `record.kv` payloads so downstream systems can parse hit/miss telemetry, TTL decisions, and rewards.
+* Proxy, semantic cache, repository, and policy modules emit scoped events (for example `proxy.cache_decision`, `semantic_cache.lookup_decision`, `semantic_cache.policy_reward`) by attaching `record.kv` payloads so downstream systems can parse hit/miss telemetry, TTL decisions, and rewards. The semantic cache runner re-enables these loggers before each async operation to guard against Flask disabling them while handling streaming responses.
 * `REQUEST_ID_VAR` in `app/logging.py` exposes the current request id for downstream propagation (database rows, Qdrant payloads, vLLM headers) and log correlation.
 
 ---

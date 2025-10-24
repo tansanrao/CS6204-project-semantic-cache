@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Iterable, Mapping, MutableMapping
+from typing import Iterable, Mapping
 
 
 def _lookup_env(

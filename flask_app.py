@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import atexit
 import httpx
+from dotenv import load_dotenv
 from flask import Flask, Response, g, request
 from qdrant_client import QdrantClient
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -27,7 +28,12 @@ from app.logging import (
 from app.proxy.router import create_blueprint
 from app.proxy.service import ProxyService
 
+from app.runtime import BackgroundAsyncRunner
+
+
 LOG = logging.getLogger("app")
+
+load_dotenv()
 
 
 class _ResourceBundle:
@@ -40,19 +46,37 @@ class _ResourceBundle:
         cache_service: SemanticCacheService | None,
         cache_engine: AsyncEngine | None,
         qdrant_client: QdrantClient | None,
+        async_runner: BackgroundAsyncRunner | None,
     ) -> None:
         self.http_client = http_client
         self.cache_service = cache_service
         self.cache_engine = cache_engine
         self.qdrant_client = qdrant_client
+        self.async_runner = async_runner
 
     def close(self) -> None:
         """Dispose managed resources."""
         self.http_client.close()
         if self.cache_engine is not None:
-            asyncio.run(self.cache_engine.dispose())
+            try:
+                if self.async_runner is not None:
+                    self.async_runner.run(self.cache_engine.dispose())
+                else:
+                    asyncio.run(self.cache_engine.dispose())
+            except Exception as exc:  # pragma: no cover - defensive cleanup
+                LOG.warning(
+                    "semantic_cache.engine_dispose_failed",
+                    extra={
+                        "kv": {
+                            "event": "semantic_cache.engine_dispose_failed",
+                            "error": str(exc),
+                        }
+                    },
+                )
         if self.qdrant_client is not None:
             self.qdrant_client.close()
+        if self.async_runner is not None:
+            self.async_runner.close()
 
 
 def create_app(
@@ -69,13 +93,21 @@ def create_app(
     cache_service: SemanticCacheService | None = None
     cache_engine: AsyncEngine | None = None
     qdrant_client: QdrantClient | None = None
+    async_runner: BackgroundAsyncRunner | None = None
 
     if resolved_settings.semantic_cache_enabled:
+        async_runner = BackgroundAsyncRunner()
         (
             cache_service,
             cache_engine,
             qdrant_client,
-        ) = _initialize_semantic_cache(resolved_settings)
+        ) = _initialize_semantic_cache(
+            resolved_settings,
+            async_runner=async_runner,
+        )
+        if cache_service is None and async_runner is not None:
+            async_runner.close()
+            async_runner = None
         if cache_service is not None:
             LOG.info(
                 "semantic_cache.initialized",
@@ -96,6 +128,7 @@ def create_app(
         settings=resolved_settings,
         client=http_client,
         semantic_cache=cache_service,
+        async_runner=async_runner.run if async_runner and cache_service else None,
     )
 
     bundle = _ResourceBundle(
@@ -103,6 +136,7 @@ def create_app(
         cache_service=cache_service,
         cache_engine=cache_engine,
         qdrant_client=qdrant_client,
+        async_runner=async_runner,
     )
     app.config["proxy_service"] = proxy_service
     app.config["_resource_bundle"] = bundle
@@ -159,6 +193,8 @@ def create_app(
 
 def _initialize_semantic_cache(
     settings: Settings,
+    *,
+    async_runner: BackgroundAsyncRunner | None = None,
 ) -> tuple[
     SemanticCacheService | None,
     AsyncEngine | None,
@@ -231,12 +267,15 @@ def _initialize_semantic_cache(
 
     if settings.semantic_cache_bootstrap:
         try:
-            asyncio.run(
-                asyncio.wait_for(
-                    service.bootstrap(),
-                    timeout=settings.semantic_cache_bootstrap_timeout_seconds,
-                )
+            runner = async_runner
+            coroutine = asyncio.wait_for(
+                service.bootstrap(),
+                timeout=settings.semantic_cache_bootstrap_timeout_seconds,
             )
+            if runner is not None:
+                runner.run(coroutine)
+            else:
+                asyncio.run(coroutine)
         except TimeoutError:
             LOG.error(
                 "semantic_cache.bootstrap_timeout",
@@ -247,7 +286,10 @@ def _initialize_semantic_cache(
                     }
                 },
             )
-            asyncio.run(engine.dispose())
+            if async_runner is not None:
+                async_runner.run(engine.dispose())
+            else:
+                asyncio.run(engine.dispose())
             qdrant_client.close()
             return None, None, None
         except Exception as exc:  # pragma: no cover - defensive guard
@@ -261,7 +303,10 @@ def _initialize_semantic_cache(
                     }
                 },
             )
-            asyncio.run(engine.dispose())
+            if async_runner is not None:
+                async_runner.run(engine.dispose())
+            else:
+                asyncio.run(engine.dispose())
             qdrant_client.close()
             return None, None, None
 

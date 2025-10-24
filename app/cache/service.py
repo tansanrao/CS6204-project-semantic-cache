@@ -125,7 +125,7 @@ class SemanticCacheService:
         LOG.info(
             "semantic_cache.initialized",
             extra={
-                "extra": {
+                "kv": {
                     "policy": policy_label,
                     "collection": collection_name,
                     "embedding_model": self._embedding_model_name,
@@ -140,13 +140,13 @@ class SemanticCacheService:
         collection_name = getattr(self._vector_store, "_collection_name", "unknown")
         LOG.info(
             "semantic_cache.bootstrap_start",
-            extra={"extra": {"collection": collection_name}},
+            extra={"kv": {"collection": collection_name}},
         )
         await self._repository.create_schema()
         await self._vector_store.ensure_collection()
         LOG.info(
             "semantic_cache.bootstrap_complete",
-            extra={"extra": {"collection": collection_name}},
+            extra={"kv": {"collection": collection_name}},
         )
 
     def normalize_request(
@@ -165,7 +165,7 @@ class SemanticCacheService:
         LOG.info(
             "semantic_cache.lookup_start",
             extra={
-                "extra": {
+                "kv": {
                     "request_fingerprint": query.request_fingerprint,
                     "model": query.model,
                 }
@@ -190,7 +190,7 @@ class SemanticCacheService:
         LOG.info(
             "semantic_cache.lookup_decision",
             extra={
-                "extra": {
+                "kv": {
                     "decision": decision.status.value,
                     "request_fingerprint": query.request_fingerprint,
                     "prompt_hash": query.prompt_hash,
@@ -216,7 +216,7 @@ class SemanticCacheService:
             LOG.info(
                 "semantic_cache.ttl_selection",
                 extra={
-                    "extra": {
+                    "kv": {
                         "policy": "disabled",
                         "bucket": bucket,
                         "propensity": 1.0,
@@ -229,7 +229,7 @@ class SemanticCacheService:
         LOG.info(
             "semantic_cache.ttl_selection",
             extra={
-                "extra": {
+                "kv": {
                     "policy": self._settings.policy_type,
                     "bucket": action,
                     "propensity": round(propensity, 4),
@@ -294,7 +294,7 @@ class SemanticCacheService:
         LOG.info(
             "semantic_cache.store",
             extra={
-                "extra": {
+                "kv": {
                     "entry_id": str(entry_id),
                     "request_fingerprint": query.request_fingerprint,
                     "prompt_hash": query.prompt_hash,
@@ -334,7 +334,7 @@ class SemanticCacheService:
         LOG.info(
             "semantic_cache.ttl_decision",
             extra={
-                "extra": {
+                "kv": {
                     "decision_id": str(payload.id),
                     "cache_entry_id": str(entry.id),
                     "bucket": ttl_bucket,
@@ -372,7 +372,7 @@ class SemanticCacheService:
         LOG.info(
             "semantic_cache.feedback",
             extra={
-                "extra": {
+                "kv": {
                     "cache_entry_id": str(payload.cache_entry_id),
                     "event_type": payload.event_type,
                     "score": round(payload.score, 4),
@@ -391,7 +391,7 @@ class SemanticCacheService:
         await self._repository.mark_hit(entry_id, datetime.now(UTC))
         LOG.info(
             "semantic_cache.hit",
-            extra={"extra": {"cache_entry_id": str(entry_id)}},
+            extra={"kv": {"cache_entry_id": str(entry_id)}},
         )
 
     async def log_refresh_outcome(self, outcome: RefreshOutcome) -> None:
@@ -400,7 +400,7 @@ class SemanticCacheService:
         LOG.info(
             "semantic_cache.refresh_outcome",
             extra={
-                "extra": {
+                "kv": {
                     "cache_entry_id": str(outcome.cache_entry_id),
                     "ttl_decision_id": str(outcome.ttl_decision_id)
                     if outcome.ttl_decision_id
@@ -422,7 +422,7 @@ class SemanticCacheService:
             LOG.info(
                 "semantic_cache.ttl_extension",
                 extra={
-                    "extra": {
+                    "kv": {
                         "cache_entry_id": str(outcome.cache_entry_id),
                         **extension_detail,
                     }
@@ -436,7 +436,7 @@ class SemanticCacheService:
             LOG.info(
                 "semantic_cache.ttl_guardrail",
                 extra={
-                    "extra": {
+                    "kv": {
                         "cache_entry_id": str(outcome.cache_entry_id),
                         **guardrail_detail,
                     }
@@ -467,7 +467,7 @@ class SemanticCacheService:
         LOG.info(
             "semantic_cache.policy_reward",
             extra={
-                "extra": {
+                "kv": {
                     "ttl_decision_id": str(payload.ttl_decision_id),
                     "reward": round(reward_value, 4),
                     "attribution_rule": payload.attribution_rule,

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
 import httpx
@@ -28,6 +27,7 @@ from app.cache.types import (
 )
 from app.config import Settings
 from app.proxy.service import CacheContext, ProxyService
+from app.runtime import BackgroundAsyncRunner
 
 
 class _FakeEmbeddingService:
@@ -182,9 +182,15 @@ def _make_proxy(
     settings: Settings,
     backend: Callable[[httpx.Request], httpx.Response],
     semantic_cache: SemanticCacheService | None = None,
+    async_runner: Callable[[Awaitable[Any]], Any] | None = None,
 ) -> ProxyService:
     client = httpx.Client(transport=httpx.MockTransport(backend))
-    return ProxyService(settings=settings, client=client, semantic_cache=semantic_cache)
+    return ProxyService(
+        settings=settings,
+        client=client,
+        semantic_cache=semantic_cache,
+        async_runner=async_runner,
+    )
 
 
 def _invoke_proxy(
@@ -317,47 +323,62 @@ def test_proxy_caches_and_logs_decision() -> None:
         embedding_mode="clustering",
         embedding_dimension=4,
     )
-    asyncio.run(semantic_cache.bootstrap())
+    runner = BackgroundAsyncRunner()
+    decision = None
+    try:
+        runner.run(semantic_cache.bootstrap())
 
-    backend_calls = {"count": 0}
+        backend_calls = {"count": 0}
 
-    def backend(request: httpx.Request) -> httpx.Response:
-        backend_calls["count"] += 1
-        return httpx.Response(
-            200,
-            json={
-                "id": "resp-001",
-                "object": "chat.completion",
-                "choices": [{"message": {"role": "assistant", "content": "Hello"}}],
-            },
-            request=request,
+        def backend(request: httpx.Request) -> httpx.Response:
+            backend_calls["count"] += 1
+            return httpx.Response(
+                200,
+                json={
+                    "id": "resp-001",
+                    "object": "chat.completion",
+                    "choices": [
+                        {"message": {"role": "assistant", "content": "Hello"}}
+                    ],
+                },
+                request=request,
+            )
+
+        settings = Settings(
+            vllm_base_url="http://backend.local/v1/",
+            inbound_api_keys=[],
+            semantic_cache_enabled=True,
+        )
+        service = _make_proxy(
+            settings=settings,
+            backend=backend,
+            semantic_cache=semantic_cache,
+            async_runner=runner.run,
         )
 
-    settings = Settings(
-        vllm_base_url="http://backend.local/v1/",
-        inbound_api_keys=[],
-        semantic_cache_enabled=True,
-    )
-    service = _make_proxy(settings=settings, backend=backend, semantic_cache=semantic_cache)
+        payload = {
+            "model": "gpt-test",
+            "messages": [
+                {"role": "user", "content": "Breaking news about markets"}
+            ],
+        }
 
-    payload = {
-        "model": "gpt-test",
-        "messages": [{"role": "user", "content": "Breaking news about markets"}],
-    }
+        first_response = _invoke_proxy(service, path="chat/completions", payload=payload)
+        assert first_response.status_code == 200
+        assert backend_calls["count"] == 1
 
-    first_response = _invoke_proxy(service, path="chat/completions", payload=payload)
-    assert first_response.status_code == 200
-    assert backend_calls["count"] == 1
+        second_response = _invoke_proxy(service, path="chat/completions", payload=payload)
+        assert second_response.status_code == 200
+        assert second_response.headers["X-Cache"] == "HIT"
+        assert backend_calls["count"] == 1
 
-    second_response = _invoke_proxy(service, path="chat/completions", payload=payload)
-    assert second_response.status_code == 200
-    assert second_response.headers["X-Cache"] == "HIT"
-    assert backend_calls["count"] == 1
-
-    assert repository.ttl_decisions, "expected TTL decision to be recorded"
-    decision = repository.ttl_decisions[0]
-    assert decision.policy_name == "linucb"
-    assert decision.ttl_bucket in {0, 1, 2}
+        assert repository.ttl_decisions, "expected TTL decision to be recorded"
+        decision = repository.ttl_decisions[0]
+        assert decision.policy_name == "linucb"
+        assert decision.ttl_bucket in {0, 1, 2}
+    finally:
+        runner.close()
+    assert decision is not None
     assert decision.propensity is not None and 0.0 < decision.propensity <= 1.0
 
     assert repository.feedback_events

@@ -60,12 +60,13 @@ flask_app.py
 ---
 
 ## 4. Logging Strategy
-- Configure root logger with plain formatter: `%(asctime)s %(levelname)s %(name)s %(message)s`.
+- Configure root logger with plain formatter: `%(asctime)s %(levelname)s %(name)s %(message)s`, and attach dedicated handlers to the `app.proxy`, `app.cache`, `app.semantic_cache`, and `app.policy` loggers so INFO-level cache telemetry survives any subsequent root-level reconfiguration.
 - Helpers to emit key=value sequences:
   - `log_request_start(request_id, method, path, client_ip)`
   - `log_request_complete(request_id, status, cache_status, latency_ms, bytes_out)`
   - `log_cache_event(request_id, event, **fields)` e.g. `cache_hit`, `cache_miss`, `cache_store`.
   - `log_policy_event(request_id, action, propensity, feature_summary)`
+- When cache operations hop onto the background asyncio runner, explicitly re-enable the namespace loggers before executing each coroutine to guard against Flask temporarily disabling them during request handling.
 - Request ID propagation:
   - `g.request_id` assigned in `before_request` (reuse inbound `X-Request-ID` or `uuid4()`).
   - Inject into downstream calls (headers to vLLM, repo logs).

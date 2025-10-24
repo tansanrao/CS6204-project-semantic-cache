@@ -46,7 +46,7 @@
 - [ ] Implement refresh pipeline stages (classify → retrieve → synthesize → compare) and ensure stale confirmations overwrite cached payloads with updated responses.
 
 ### 6. Observability & Ops
-- [x] Structured logging with per-request correlation and key=value payloads. (24 Oct 2025 — `app/logging.py`, Flask request hooks, and scoped loggers emit events such as `proxy.cache_decision` & `semantic_cache.lookup_decision`.)
+- [x] Structured logging with per-request correlation and key=value payloads. (24 Oct 2025 — `app/logging.py`, Flask request hooks, scoped loggers emit events such as `proxy.cache_decision` & `semantic_cache.lookup_decision`, and dedicated handlers plus logger re-enablement in `app/runtime/async_runner.py` ensure cache telemetry stays visible after reloads.)
 - [ ] Expand guardrail handling with bucket-level stale/stability metrics (hazard curves, drift signals, canary probes) and use aggregates to adjust exploration priors.
 - [ ] Prometheus/Grafana metrics: hit rate, stale rate by bucket, survival curves, early-stale ratio.
 - [ ] CLI / admin endpoint to reload policy weights without deploy.
