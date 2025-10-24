@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.features.semantic_cache.qdrant import QdrantVectorStore
+from app.cache.qdrant import QdrantVectorStore
 
 
 @pytest.mark.anyio

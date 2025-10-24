@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from sqlalchemy import UniqueConstraint
 
-from app.features.semantic_cache import models
+from app.cache import models
 
 
 def test_cache_entry_table_has_expected_columns() -> None:

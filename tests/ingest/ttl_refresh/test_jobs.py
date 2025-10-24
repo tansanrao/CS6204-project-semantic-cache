@@ -7,15 +7,15 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.features.semantic_cache.repository import CacheRepository
-from app.features.semantic_cache.types import (
+from app.cache.repository import CacheRepository
+from app.cache.types import (
     BucketAggregate,
     CacheEntryCreate,
     FeedbackEventCreate,
     PolicyRewardCreate,
     TTLDecisionCreate,
 )
-from app.ingest.ttl_refresh import RefreshBatch, build_refresh_batch
+from app.tasks.jobs import RefreshBatch, build_refresh_batch
 
 
 @pytest_asyncio.fixture

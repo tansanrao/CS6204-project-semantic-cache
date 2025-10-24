@@ -1,4 +1,4 @@
-"""Startup regression tests for the FastAPI application."""
+"""Startup regression tests for the Flask application factory."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.core.config import Settings
-import app.main as main_module
+from app.config import Settings
+import flask_app as flask_module
 
 
 class _StubEngine:
@@ -96,8 +96,7 @@ class _TimeoutSemanticCacheService:
         await asyncio.sleep(0.05)
 
 
-@pytest.mark.anyio
-async def test_initialize_semantic_cache_times_out(
+def test_initialize_semantic_cache_times_out(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Bootstrap timeout should disable the semantic cache and clean up resources."""
@@ -117,16 +116,16 @@ async def test_initialize_semantic_cache_times_out(
         client_holder["client"] = client
         return client
 
-    monkeypatch.setattr(main_module, "create_async_engine", fake_create_async_engine)
-    monkeypatch.setattr(main_module, "CacheRepository", _StubRepository)
+    monkeypatch.setattr(flask_module, "create_async_engine", fake_create_async_engine)
+    monkeypatch.setattr(flask_module, "CacheRepository", _StubRepository)
     monkeypatch.setattr(
-        main_module, "load_embedding_service", fake_load_embedding_service
+        flask_module, "load_embedding_service", fake_load_embedding_service
     )
     monkeypatch.setattr(
-        main_module, "SemanticCacheService", _TimeoutSemanticCacheService
+        flask_module, "SemanticCacheService", _TimeoutSemanticCacheService
     )
-    monkeypatch.setattr(main_module, "QdrantClient", fake_qdrant_client)
-    monkeypatch.setattr(main_module, "QdrantVectorStore", _StubVectorStore)
+    monkeypatch.setattr(flask_module, "QdrantClient", fake_qdrant_client)
+    monkeypatch.setattr(flask_module, "QdrantVectorStore", _StubVectorStore)
 
     settings = Settings(
         semantic_cache_enabled=True,
@@ -136,7 +135,7 @@ async def test_initialize_semantic_cache_times_out(
         qdrant_url="http://localhost:6333",
     )
 
-    service, engine, client = await main_module._initialize_semantic_cache(settings)  # noqa: SLF001
+    service, engine, client = flask_module._initialize_semantic_cache(settings)  # noqa: SLF001
 
     assert service is None
     assert engine is None

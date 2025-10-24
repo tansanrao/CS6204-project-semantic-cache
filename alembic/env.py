@@ -14,7 +14,7 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from app.features.semantic_cache import models as semantic_models
+from app.cache import models as semantic_models
 
 
 config = context.config

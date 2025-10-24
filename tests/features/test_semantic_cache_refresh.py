@@ -8,10 +8,10 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.features.semantic_cache.models import feedback_event, policy_reward
-from app.features.semantic_cache.repository import CacheRepository
-from app.features.semantic_cache.service import SemanticCacheService
-from app.features.semantic_cache.types import (
+from app.cache.models import feedback_event, policy_reward
+from app.cache.repository import CacheRepository
+from app.cache.service import SemanticCacheService
+from app.cache.types import (
     CacheEntryCreate,
     RefreshEventType,
     RefreshOutcome,

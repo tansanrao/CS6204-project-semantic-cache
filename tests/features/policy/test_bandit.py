@@ -4,14 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from app.features.semantic_cache.policy.bandit import (
+from app.policy.bandit import (
     LinUCBConfig,
     LinUCBPolicy,
     ThompsonSamplingConfig,
     ThompsonSamplingPolicy,
 )
-from app.features.semantic_cache.policy.features import FeatureVector
-from app.features.semantic_cache.policy.manager import (
+from app.policy.features import FeatureVector
+from app.policy.manager import (
     PolicyRuntimeConfig,
     build_policy_manager,
 )

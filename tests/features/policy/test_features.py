@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from app.features.semantic_cache.policy import build_default_entity_recognizer
-from app.features.semantic_cache.policy.features import (
+from app.policy import build_default_entity_recognizer
+from app.policy.features import (
     EntitySpan,
     ExtractionContext,
     FeatureExtractor,

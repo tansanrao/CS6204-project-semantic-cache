@@ -280,46 +280,43 @@ def check_freshness(entry):
 
 ## 12) OpenAI-Compatible Proxy Service
 
-We expose a lightweight FastAPI service that forwards OpenAI-compatible requests to the vLLM gateway.
+We expose a lightweight Flask service that fronts the vLLM gateway while preserving OpenAI semantics.
 
 ### Runtime overview
 
-* `FastAPI` application under `app/` with a dedicated proxy router in `app/features/proxy/`.
-* Inbound requests are matched on `/v1/**` to stay compatible with OpenAI SDKs.
-* Requests are forwarded through a shared `httpx.AsyncClient`, allowing connection pooling and streaming.
-* Streaming (`text/event-stream`) responses are relayed chunk-by-chunk without buffering to keep token streaming behaviour intact.
-* Every request emits a structured log line classifying the cache outcome
-  (`hit`, `stale-hit`, `miss`) and JSON responses include a `ttl_proxy`
-  metadata block with request and cache statistics for client consumption.
+* `flask_app.py` bootstraps configuration, logging hooks, and the proxy blueprint in `app/proxy/`.
+* `/v1/**` routes remain OpenAI-compatible and are handled synchronously with a shared `httpx.Client` for connection pooling and streaming.
+* Streaming (`text/event-stream`) responses are relayed chunk-by-chunk without buffering to preserve token streaming behaviour.
+* Each response attaches a `ttl_proxy` metadata block capturing cache status, TTL decision details, and policy propensity for client diagnostics.
 
 ### Authentication and configuration
 
-* Env configuration uses `pydantic-settings` (`proxy_` prefix) and loads a `.env` file. Key values:
-  * `PROXY_VLLM_BASE_URL`: absolute base URL of the vLLM gateway (defaults to `http://localhost:8000/v1`).
-  * `PROXY_VLLM_API_KEY`: optional bearer token the proxy injects toward the vLLM backend.
-  * `PROXY_INBOUND_API_KEYS`: optional comma-separated list of client tokens. When present, the proxy requires `Authorization: Bearer <token>` and replaces the header with the backend key.
-  * `PROXY_REQUEST_TIMEOUT_SECONDS`: per-request timeout applied to the shared httpx client.
+* Runtime settings live in `app/config.py` as a dataclass loader. Environment variables retain the `PROXY_` prefix; notable options:
+  * `PROXY_VLLM_BASE_URL`: base URL of the vLLM gateway (default `http://localhost:8000/v1`).
+  * `PROXY_VLLM_API_KEY`: optional bearer token injected toward the backend.
+  * `PROXY_INBOUND_API_KEYS`: optional comma-separated list of client tokens. When present, inbound requests must send `Authorization: Bearer <token>`; the proxy forwards the backend key instead.
+  * `PROXY_REQUEST_TIMEOUT_SECONDS`: timeout applied to the shared `httpx` client.
 
 ### Error handling
 
-* Any response from vLLM (status/body/headers) is reflected back to callers apart from hop-by-hop headers.
-* Auth failures are rejected locally with 401/403 before touching the backend.
+* Backend responses (status/body/headers) are forwarded verbatim except hop-by-hop headers.
+* Auth failures are rejected locally with 401/403 before contacting vLLM.
 
 ### Testing
 
-* Tests live in `tests/features/test_proxy.py`; they exercise pass-through JSON calls, streaming requests, and auth guardrails via `httpx.MockTransport`.
+* Feature coverage resides in `tests/features/test_proxy.py`, which drives the proxy with `httpx.MockTransport` to assert pass-through JSON calls, SSE streaming, auth guardrails, and cache hits.
 
 ### Deployment notes
 
-* When running locally: `uv sync --frozen --python 3.11` followed by `uv run uvicorn app.main:app --reload`.
-* Docker compose stacks remain unchanged; the proxy binds to the FastAPI HTTP port
-  (default 8000) and forwards to the existing vLLM gateway.
+* Local workflow: `uv sync --frozen --python 3.11` followed by `uv run python flask_app.py` (or `uv run flask --app flask_app run --debug`).
+* Docker compose stacks remain unchanged; the proxy binds to the same HTTP port (default 8000) and forwards to the existing vLLM gateway.
 
 ### Observability & logging
 
-* Logging now uses Python's default configuration (`logging.basicConfig(level=logging.INFO)` in `app/main.py`), relying on uvicorn/FastAPI's built-in access logs.
-* `ProxyService` emits info-level `proxy decision` lines summarizing cache/TTL outcomes, and semantic cache + policy components log through their module loggers exclusively at info, warning, or error levels.
-* Request-scoped context IDs were removed; `request.state.cache_context` is cleaned up inside `ProxyService.forward` once a request completes.
+* Concise key=value logging is configured via `app/logging.py`, which installs request hooks and a formatter that emits `timestamp level logger event key=value...` lines.
+* Flask `before_request`/`after_request` handlers assign or propagate `X-Request-ID`, log lifecycle events (`proxy.request_start`, `proxy.request_complete`), and append the request id to responses.
+* Proxy, semantic cache, repository, and policy modules emit scoped events (for example `proxy.cache_decision`, `semantic_cache.lookup_decision`, `semantic_cache.policy_reward`) by attaching `record.kv` payloads so downstream systems can parse hit/miss telemetry, TTL decisions, and rewards.
+* `REQUEST_ID_VAR` in `app/logging.py` exposes the current request id for downstream propagation (database rows, Qdrant payloads, vLLM headers) and log correlation.
 
 ---
 
@@ -327,12 +324,12 @@ We expose a lightweight FastAPI service that forwards OpenAI-compatible requests
 
 *Embedding runtime*
 
-* The FastAPI app loads `nomic-ai/nomic-embed-text-v1.5` (SentenceTransformer, `prompt_name="clustering"`) on startup when `PROXY_SEMANTIC_CACHE_ENABLED=true`. Embeddings are Matryoshka-trimmed to 768 dims and normalized before similarity calculations.
+* The Flask app loads `nomic-ai/nomic-embed-text-v1.5` (SentenceTransformer, `prompt_name="clustering"`) during bootstrap when `PROXY_SEMANTIC_CACHE_ENABLED=true`. Embeddings are Matryoshka-trimmed to 768 dims and normalized before similarity calculations.
 * `EmbeddingService` defers model initialization to first use and runs encode calls via `asyncio.to_thread` to avoid blocking the event loop.
 
 *Storage backends*
 
-* Postgres schema lives in `app/features/semantic_cache/models.py`. Table `cache_entry` holds request hashes, response payloads, TTL metadata, and embedding provenance (model/mode/dimension). `cache_entry.request_fingerprint` is unique; indexes exist for `model` and `expires_at` to speed lookups and expiry sweeps.
+* Postgres schema lives in `app/cache/models.py`. Table `cache_entry` holds request hashes, response payloads, TTL metadata, and embedding provenance (model/mode/dimension). `cache_entry.request_fingerprint` is unique; indexes exist for `model` and `expires_at` to speed lookups and expiry sweeps.
 * Qdrant bootstrap uses `Distance.COSINE`, vector size 768, and stores payload metadata (`cache_entry_id`, `model`, `params_fingerprint`, `expires_at_ts`, etc.). Collection name defaults to `cache_entries` and is validated for dimensional drift during startup.
 
 *Application wiring*

@@ -9,11 +9,11 @@ from uuid import UUID
 
 import pytest
 
-from app.features.semantic_cache.service import (
+from app.cache.service import (
     SemanticCacheService,
     SemanticCacheSettings,
 )
-from app.features.semantic_cache.types import CacheDecisionStatus, CacheEntry
+from app.cache.types import CacheDecisionStatus, CacheEntry
 
 
 class _StaticEmbedder:
