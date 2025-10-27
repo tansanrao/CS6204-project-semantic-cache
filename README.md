@@ -27,3 +27,13 @@ Why this approach?
 ### Storage & Embeddings
 - **What:** Nomic v1.5 embeddings (Matryoshka-trimmed to 512 dims); Qdrant (cosine) + Postgres metadata.
 - **Why:** Fast approximate search, good semantic recall at modest cost; payload indexing supports efficient expiry scans and policy analytics.
+
+
+## Online Flow
+1. **Lookup:** Qdrant for a valid (not expired) near-duplicate with `τ_hit = 0.86`. (This is tunable) If hit → return immediately; enqueue freshness check with bucket‑dependent rate `ρ(Bi)`.
+2. **Miss path:** Compute features → bandit selects TTL bucket `Bi` → call upstream LLM → write-through cache with `expires_at = now + Bi`.
+3. **Freshness checks (for hits):** Sampled by `ρ(Bi)`; run validator, compute deltas:
+    - `semantic_delta = 1 − cos(embed(R_cache), embed(R_new))`
+    - `fact_delta` via QA-based factual metric Mark **stale** if `(semantic_delta > σ_sem OR fact_delta > σ_fact)` and sources are newer than `created_at`.
+4. **Stale-hit Refresh Path**: compare semantic + factual similarity, ensure stale hit actually stale, provide feedback to classifier with appropriate reward.
+**Defaults:** `σ_sem = 0.25`, `σ_fact = 0.35`, `ρ(Bi) = {0.5, 0.25, 0.15, 0.10, 0.05, 0.02}`.
