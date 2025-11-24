@@ -1,0 +1,13 @@
+[project]
+name = "semantic-caching"
+version = "0.1.0"
+description = "CS6204 Semantic Caching - classifier with semantic caching to enable dynamic TTL cache entries"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "contextualbandits>=0.3.28",
+    "numpy>=2.3.5",
+    "openai>=2.8.1",
+    "pandas>=2.3.3",
+    "pytest>=9.0.1",
+]
