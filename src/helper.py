@@ -1,5 +1,22 @@
 import ast
 import pandas as pd
+from pathlib import Path
+import os
+
+
+
+
+def _parse_env_file(path: Path) -> dict:
+    env = {}
+    if not path.exists():
+        return env
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        env[key.strip()] = value.strip().strip("'\"")
+    return env
 
 from openai import OpenAI
 
@@ -25,10 +42,22 @@ def get_train_test(path):
 
     return train_df, test_df
 
+def _load_api_key() -> str:
+    env_path = Path(__file__).parent / ".env"
+    parsed = _parse_env_file(env_path)
+    api_key = os.getenv("PROXY_API_KEY") or parsed.get("PROXY_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "PROXY_API_KEY not set. Provide it in the environment or src/.env"
+        )
+    return api_key
+
 MODEL_NAME = "openai/gpt-oss-20b"
 # PROXY_BASE_URL = "http://localhost:8000/v1"
 PROXY_BASE_URL = "https://openrouter.ai/api/v1"
-PROXY_API_KEY = "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"
+
+
+PROXY_API_KEY = _load_api_key()
 client = OpenAI(
     base_url=PROXY_BASE_URL, 
     api_key=PROXY_API_KEY)
