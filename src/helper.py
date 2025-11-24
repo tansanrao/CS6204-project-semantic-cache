@@ -1,10 +1,20 @@
 import ast
-import pandas as pd
-from pathlib import Path
 import os
+from pathlib import Path
 
+import pandas as pd
 
+from openai import OpenAI
 
+def _load_api_key() -> str:
+    env_path = Path(__file__).parent / ".env"
+    parsed = _parse_env_file(env_path)
+    api_key = os.getenv("PROXY_API_KEY") or parsed.get("PROXY_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "PROXY_API_KEY not set. Provide it in the environment or src/.env"
+        )
+    return api_key
 
 def _parse_env_file(path: Path) -> dict:
     env = {}
@@ -18,15 +28,23 @@ def _parse_env_file(path: Path) -> dict:
         env[key.strip()] = value.strip().strip("'\"")
     return env
 
-from openai import OpenAI
+def _normalize_responses(value):
+    """Parse the new `responses` column into a list of (tool, llm_answer) tuples."""
+    parsed = ast.literal_eval(value) if isinstance(value, str) else value
+    if not isinstance(parsed, list):
+        return []
+    normalized = []
+    for item in parsed:
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            normalized.append((item[0], item[1]))
+    return normalized
+
 
 def get_train_test(path):
     df = pd.read_csv(path)
 
-    # Convert tool_call_response string → Python list
-    df["tool_call_response"] = df["tool_call_response"].apply(
-        lambda x: ast.literal_eval(x) if isinstance(x, str) else []
-    )
+    # Convert responses string → Python list[tuple]; keep only first two elements.
+    df["responses"] = df["responses"].apply(_normalize_responses)
 
     # -------- Stratified 80/20 Split --------
     train_df = (
@@ -41,16 +59,6 @@ def get_train_test(path):
     test_df = test_df.reset_index(drop=True)
 
     return train_df, test_df
-
-def _load_api_key() -> str:
-    env_path = Path(__file__).parent / ".env"
-    parsed = _parse_env_file(env_path)
-    api_key = os.getenv("PROXY_API_KEY") or parsed.get("PROXY_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "PROXY_API_KEY not set. Provide it in the environment or src/.env"
-        )
-    return api_key
 
 MODEL_NAME = "openai/gpt-oss-20b"
 # PROXY_BASE_URL = "http://localhost:8000/v1"
@@ -124,4 +132,3 @@ def llm_with_tool_call(prompt, tool_call_response):
         return llm_answer
     
     return None
-

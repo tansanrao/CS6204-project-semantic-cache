@@ -1,31 +1,45 @@
-"""Prompt featurization utilities for TTL bandit policies."""
+"""Prompt featurization utilities for TTL bandit policies.
+
+This extractor focuses on structural features, stability cues, and grouped
+recency signals aligned to TTL horizons (never cache vs daily/weekly/longer).
+Entity-derived and request-context features were removed to keep the vector
+focused on text content.
+"""
 
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import dataclass
 from typing import Iterable, Protocol
 
 
-RECENCY_KEYWORDS = (
-    "today",
-    "tonight",
-    "now",
-    "latest",
-    "breaking",
-    "this week",
-    "this month",
-    "recent",
-    "current",
-    "update",
-    "news",
-    "earnings",
-    "weather",
-    "price",
-    "score",
-    "release",
-)
+RECENCY_KEYWORD_GROUPS: dict[str, tuple[str, ...]] = {
+    # Urgent or streaming content that should not be cached for long.
+    "recency.never_cache_hits": (
+        "breaking",
+        "now",
+        "latest",
+        "live",
+        "current",
+        "update",
+        "news",
+    ),
+    # Content that tends to shift daily (scores, prices, weather, dayparted asks).
+    "recency.daily_hits": (
+        "today",
+        "tonight",
+        "morning",
+        "afternoon",
+        "evening",
+        "weather",
+        "price",
+        "score",
+    ),
+    # Weekly cadence requests.
+    "recency.weekly_hits": ("week", "weekly", "weekend", "seven-day"),
+    # Longer-lived but still time-aware items.
+    "recency.long_term_hits": ("month", "monthly", "earnings", "release", "recent"),
+}
 
 STABILITY_TERMS = (
     "how to",
@@ -103,13 +117,15 @@ class FeatureExtractor:
         self,
         *,
         entity_recognizer: EntityRecognizer | None = None,
-        recency_keywords: tuple[str, ...] = RECENCY_KEYWORDS,
+        recency_keyword_groups: dict[str, tuple[str, ...]] | None = None,
         stability_terms: tuple[str, ...] = STABILITY_TERMS,
     ) -> None:
         self._entity_recognizer = entity_recognizer
-        self._recency_keywords = tuple(
-            {kw.lower().strip(): kw for kw in recency_keywords}.keys()
-        )
+        groups = recency_keyword_groups or RECENCY_KEYWORD_GROUPS
+        self._recency_keyword_groups = {
+            group: tuple({kw.lower().strip(): kw for kw in keywords}.keys())
+            for group, keywords in groups.items()
+        }
         self._stability_terms = tuple(
             {term.lower().strip(): term for term in stability_terms}.keys()
         )
@@ -160,8 +176,8 @@ class FeatureExtractor:
             1.0 if TICKER_PATTERN.search(normalized) else 0.0
         )
 
-        recency_hits = sum(1 for kw in self._recency_keywords if kw in lowered)
-        feature_map["recency.keyword_hits"] = float(recency_hits)
+        for feature_key, keywords in self._recency_keyword_groups.items():
+            feature_map[feature_key] = float(_count_keyword_hits(lowered, keywords))
         feature_map["recency.relative_time_mentions"] = float(
             len(RELATIVE_TIME_PATTERN.findall(normalized))
         )
@@ -176,56 +192,11 @@ class FeatureExtractor:
             1.0 if any(token.endswith(":") for token in tokens) else 0.0
         )
 
-        if self._entity_recognizer is not None:
-            entity_counts: dict[str, float] = {}
-            total_entities = 0
-            for span in self._entity_recognizer(normalized):
-                label = span.label.upper()
-                entity_counts[label] = entity_counts.get(label, 0.0) + 1.0
-                total_entities += 1
-            for label, count in entity_counts.items():
-                feature_map[f"entity.count.{label}"] = count
-            feature_map["entity.total"] = float(total_entities)
-        else:
-            feature_map["entity.total"] = 0.0
-
-        # Omitting the entire context, have no solid understanding of why these features are required?
-        if context is not None:
-            if context.route:
-                feature_map[f"route.{context.route}"] = 1.0
-            if context.tenant_id:
-                feature_map[f"tenant.{context.tenant_id}"] = 1.0
-            if context.rate_limit_pressure is not None:
-                feature_map["ops.rate_limit_pressure"] = float(
-                    context.rate_limit_pressure
-                )
-            if context.upstream_latency_p95_ms is not None:
-                feature_map["ops.upstream_latency_p95_ms"] = float(
-                    context.upstream_latency_p95_ms
-                )
-                # embeddings of neighbors should have similar staleness
-            if context.nearest_neighbor_stale_rate is not None:
-                feature_map["nn.avg_stale_rate"] = float(
-                    max(0.0, min(context.nearest_neighbor_stale_rate, 1.0))
-                )
-            else:
-                feature_map["nn.avg_stale_rate"] = -1.0
-        else:
-            feature_map["nn.avg_stale_rate"] = -1.0
-
-        # Z-score clipping helper: ensure values remain bounded for exploration.
-        for key in ("structure.number_count", "structure.number_ratio"):
-            feature_map[key] = float(_clip(feature_map[key], -3.0, 3.0))
-
         return FeatureVector(values=feature_map)
 
 
-def _clip(value: float, lower: float, upper: float) -> float:
-    """Clamp a value into the provided range."""
-    if math.isnan(value):
-        return 0.0
-    if value < lower:
-        return lower
-    if value > upper:
-        return upper
-    return value
+def _count_keyword_hits(text: str, keywords: tuple[str, ...]) -> int:
+    """Count keyword presence using word boundaries to avoid substring noise."""
+    return sum(
+        1 for keyword in keywords if re.search(rf"\b{re.escape(keyword)}\b", text)
+    )

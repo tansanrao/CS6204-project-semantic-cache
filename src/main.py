@@ -1,20 +1,19 @@
 from __future__ import annotations
 import logging
-
-from policy.features import FeatureExtractor
-from policy.ner import build_default_entity_recognizer
-from policy.classifier import load_or_initialize_linucb
-from policy.classifier import PolicyRuntimeConfig
-
-from helper import get_train_test, llm_with_tool_call
-
 from pathlib import Path
+
+from policy.ner import build_default_entity_recognizer
+from policy.features import FeatureExtractor
+from policy.linucbWrapper import load_or_initialize_linucb
+from policy.linucbWrapper import PolicyRuntimeConfig
+
+from helper import get_train_test
 
 LOG = logging.getLogger("main")
 logging._Level = 'DEBUG'
 DEBUG = False
 
-snapshot_path = Path('data/model_snapshots/linucb_snapshot.json')
+snapshot_path = Path('../data/model_snapshots/linucb_snapshot.json')
 feature_extractor = FeatureExtractor(entity_recognizer=build_default_entity_recognizer())
 ttl_buckets = (5, 1440, 10080, 43200)  
     # in minutes: 5 mins, 1 day, 7 days, 30 days       
@@ -33,7 +32,7 @@ runtime_config = PolicyRuntimeConfig(
     autosave_interval=1)
 policy = load_or_initialize_linucb(runtime_config, snapshot_path)
 
-train_df, test_df = get_train_test('data/data.csv')
+train_df, test_df = get_train_test('../data/ai_response_data.csv')
 train_data = train_df.to_dict(orient="records")
 test_data = test_df.to_dict(orient="records")
 
@@ -45,27 +44,22 @@ if(DEBUG): input()
 
 # Training 
 iter = 0
-NUM_EPOCHS = 4
+NUM_EPOCHS = 10
 for epoch in range(NUM_EPOCHS):
     for i in range(len(train_data)):
 
         # Read input prompts from train_data
         correct_ttl_bucket_index = train_data[i]['ttl_bucket']
         prompt = train_data[i]['prompt']
-        responses = train_data[i]["tool_call_response"]
-        tool_call_response = responses[epoch % len(responses)]
-
-        # Get LLM response with tool call for given prompt
-        LOG.debug(f'Prompt: {prompt}, Tool Call Response: {tool_call_response}')
-        llm_response = llm_with_tool_call(prompt, tool_call_response)
-        LOG.debug(f'LLM Response: {llm_response}')
-        if(DEBUG): input()
+        responses = train_data[i]["responses"]
+        llm_response = responses[epoch % len(responses)][1] if responses else ""
 
         # Feature extraction
         feature_input = f'{prompt},{llm_response}'
         feature_vector = feature_extractor.extract(feature_input)
         features = feature_vector.as_dict()
-        LOG.debug(feature_vector.as_dict())
+        # print(feature_input)
+        # print(feature_vector.as_dict())
 
         # LinUCB TTL classifier
         action, _score = policy.choose(features)
@@ -77,7 +71,7 @@ for epoch in range(NUM_EPOCHS):
         # reward = 1.0 if action == correct_ttl_bucket_index else 0.0
         policy.update(action, reward, features)
 
-        print(f'{i}: Correct TTL Bucket: {correct_ttl_bucket_index}, Predicted TTL Bucket: {action}, Reward: {reward}')
+        # print(f'{i}: Correct TTL Bucket: {correct_ttl_bucket_index}, Predicted TTL Bucket: {action}, Reward: {reward}')
         LOG.debug('\n---------\n')
 
         # Snapshot periodically
@@ -97,13 +91,11 @@ correct_predictions = {'0':0, '1':0, '2':0, '3':0}
 total_predictions = {'0':0, '1':0, '2':0, '3':0}
 for i in range(len(test_data)):
 
-    # Get LLM response with tool call for given prompt
+    # Get stored LLM response for given prompt
     correct_ttl_bucket_index = test_data[i]['ttl_bucket']
     prompt = test_data[i]['prompt']
-    responses = train_data[i]["tool_call_response"]
-    tool_call_response = responses[4 % len(responses)]
-
-    llm_response = llm_with_tool_call(prompt, tool_call_response)
+    responses = test_data[i]["responses"]
+    llm_response = responses[4 % len(responses)][1] if responses else ""
 
     # Feature extraction
     feature_input = f'{prompt},{llm_response}'

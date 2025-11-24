@@ -17,7 +17,7 @@ from typing import List, Tuple
 
 import pandas as pd
 
-from collect_ai_response_train_data import llm_with_tool_call
+from helper import *
 
 
 DATA_PATH = Path("../data/ai_response_data.csv")

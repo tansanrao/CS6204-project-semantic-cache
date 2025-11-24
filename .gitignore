@@ -13,6 +13,8 @@ wheels/
 .env
 
 # data files
+!data/model_snapshots/*
 data/*
 !data/*data.csv
+!data/*.py
 todo*

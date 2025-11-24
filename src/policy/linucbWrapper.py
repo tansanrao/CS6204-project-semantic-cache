@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from policy.bandit import (
+from policy.linucb import (
     LinUCBConfig,
     LinUCBPolicy
 )
